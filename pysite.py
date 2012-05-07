@@ -2,21 +2,23 @@
 # encoding: utf-8
 
 from BeautifulSoup import BeautifulSoup
-from datetime import datetime, date
+from datetime import datetime
+from operator import itemgetter
 from urlparse import urlparse
-import dateutil.parser
+from xml.dom.minidom import parse, parseString
+import PyRSS2Gen
 import httplib
 import pytz
 import urllib2
 
 
+######################################################################
 ## static definitions
       
 HTTP_TIMEOUT = 5
 TZ_NAME = "America/Los_Angeles"
 MIME_HTML = "text/html"
 OPENER = urllib2.build_opener()
-
 
 ## global variables
 
@@ -25,6 +27,7 @@ todo_urls = set([])
 exit_urls = set([])
 
 
+######################################################################
 ## class definitions
 
 class Page:
@@ -32,28 +35,24 @@ class Page:
     representation for an HTML5 page
     """
 
-    def __init__ (self, url, soup, is_news_item=False):
+    def __init__ (self, url, soup):
         """
         initialize
         """
 
         self.url = url
+        self.soup = soup
         self.title = soup.title.string
         self.description = soup.findAll(attrs={"name":"description"})[0]["content"]
-        self.is_news_item = is_news_item
-
-        if is_news_item:
-            self.datetime = soup.findAll("time")[0]["datetime"]
-            local_dt = dateutil.parser.parse(self.datetime).replace(tzinfo=pytz.timezone(TZ_NAME))
-            self.pub_date = local_dt.astimezone(pytz.utc)
-        else:
-            self.pub_date = datetime.utcnow()
-            self.datetime = self.pub_date.isoformat()
+        self.freq = "weekly"
+        self.priority = 0.5
+        self.pub_date = datetime.utcnow()
+        self.datetime = self.pub_date.isoformat()
 
 
-    def to_rss (self):
+    def to_feed (self):
         """
-        create an RSS item based on this URL
+        create an RSS feed item based on this URL
         """
 
         return PyRSS2Gen.RSSItem(
@@ -65,7 +64,7 @@ class Page:
             )
 
 
-    def to_sitemap (self, freq="weekly"):
+    def to_site (self):
         """
         create an http://sitesmaps.org item based on this URL
         """
@@ -79,8 +78,11 @@ class Page:
         xml.append(datetime.utcnow().strftime("%Y-%m-%d"))
         xml.append("</lastmod>")
         xml.append("<changefreq>")
-        xml.append(freq)
+        xml.append(self.freq)
         xml.append("</changefreq>")
+        xml.append("<priority>")
+        xml.append("%0.1f" % self.priority)
+        xml.append("</priority>")
         xml.append("</url>")
 
         return "".join(xml)
@@ -112,7 +114,7 @@ def add_url (url):
         todo_urls.add(url)
 
 
-def http_get (url, log=[], pages={}):
+def http_get (url):
     """
     attempt to fetch HTML+status for a given URL
     """
@@ -121,6 +123,7 @@ def http_get (url, log=[], pages={}):
     status = "400"
     norm_url = url
     content_type = MIME_HTML
+    page = None
 
     try:
         response = urllib2.urlopen(url, None, HTTP_TIMEOUT)
@@ -164,8 +167,7 @@ def http_get (url, log=[], pages={}):
 
                 # preserve metadata for generating RSS
 
-                a = Page(norm_url, soup)
-                pages[a] = a.datetime
+                page = Page(norm_url, soup)
 
     except httplib.InvalidURL:
         status = "400"
@@ -179,7 +181,9 @@ def http_get (url, log=[], pages={}):
         # unknown url type: http
         status = "400"
 
-    log.append("\t".join(["in", status, norm_url]))
+    log_line = "\t".join(["in", status, norm_url])
+
+    return log_line, page
 
 
 def http_head (url, log=[]):
@@ -211,10 +215,11 @@ def http_head (url, log=[]):
         # unknown url type: http
         status = "400"
 
-    log.append("\t".join(["ex", status, url]))
+    log_line = "\t".join(["ex", status, url])
+    return log_line
 
 
-def crawl_site (seed_urls=[], log=[], pages={}):
+def crawl_site (seed_urls=[]):
     """
     crawl a web site, starting with the given 'seed' URL list
     """
@@ -223,14 +228,107 @@ def crawl_site (seed_urls=[], log=[], pages={}):
         add_url(url);
 
     while len(todo_urls) > 0:
-        url = todo_urls.pop()
-        http_get(url, log, pages)
+        yield http_get(todo_urls.pop())
 
 
-def test_externals (log=[]):
+def test_externals ():
     """
-    test external URLs
+    test the status of the external URLs
     """
 
     for url in sorted(exit_urls):
-        http_head(url, log)
+        yield http_head(url)
+
+
+######################################################################
+## validated XML generators
+
+def generate_rss_feed (feed_conf={}, feed_items=[], pretty=False):
+    """
+    fixes the XML in the RSS feed so that it passes the W3C validator
+    """
+
+    rss = PyRSS2Gen.RSS2(
+        title = feed_conf["title"],
+        link = feed_conf["link"],
+        description = feed_conf["description"],
+        lastBuildDate = datetime.utcnow(),
+        items = feed_items
+        )
+
+    dom = parseString(rss.to_xml(encoding="utf-8"))
+    dom.documentElement.setAttribute("xmlns:atom", "http://www.w3.org/2005/Atom")
+
+    image_elem = dom.createElement("image")
+
+    url_elem = dom.createElement("url")
+    text = dom.createTextNode(feed_conf["image"])
+    url_elem.appendChild(text)
+    image_elem.appendChild(url_elem)
+
+    title_elem = dom.createElement("title")
+    text = dom.createTextNode(feed_conf["title"])
+    title_elem.appendChild(text)
+    image_elem.appendChild(title_elem)
+
+    link_elem = dom.createElement("link")
+    text = dom.createTextNode(feed_conf["link"])
+    link_elem.appendChild(text)
+    image_elem.appendChild(link_elem)
+
+    link_elem = dom.createElement("atom:link")
+    link_elem.setAttribute("href", feed_conf["rss_link"])
+    link_elem.setAttribute("rel", "self")
+    link_elem.setAttribute("type", "application/rss+xml")
+
+    language_elem = dom.createElement("language")
+    text = dom.createTextNode(feed_conf["language"])
+    language_elem.appendChild(text)
+
+    copyright_elem = dom.createElement("copyright")
+    text = dom.createTextNode(feed_conf["copyright"])
+    copyright_elem.appendChild(text)
+
+    ttl_elem = dom.createElement("ttl")
+    text = dom.createTextNode(feed_conf["ttl"])
+    ttl_elem.appendChild(text)
+
+    channel_elem = dom.getElementsByTagName("channel").item(0)
+    title_elem = dom.getElementsByTagName("title").item(0)
+    item_elem = dom.getElementsByTagName("item").item(0)
+
+    channel_elem.insertBefore(link_elem, title_elem)
+    channel_elem.insertBefore(image_elem, item_elem)
+    channel_elem.insertBefore(language_elem, item_elem)
+    channel_elem.insertBefore(copyright_elem, item_elem)
+    channel_elem.insertBefore(ttl_elem, item_elem)
+
+    if pretty:
+        xml = dom.toprettyxml(indent=" ", encoding="utf-8")
+    else:
+        xml = dom.toxml("utf-8")
+
+    return xml
+
+
+def generate_site_map (site_items=[], pretty=False):
+    """
+    generates XML for a Sitemaps definition
+    """
+
+    dom = parseString(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<urlset
+xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9
+http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd"
+>""" + "".join(site_items).strip() + "</urlset>"
+        )
+
+    if pretty:
+        xml = dom.toprettyxml(indent=" ", encoding="utf-8")
+    else:
+        xml = dom.toxml("utf-8")
+
+    return xml
