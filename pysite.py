@@ -7,8 +7,11 @@ from operator import itemgetter
 from urlparse import urlparse
 from xml.dom.minidom import parse, parseString
 import PyRSS2Gen
+import dateutil.parser
 import httplib
+import os.path
 import pytz
+import re
 import urllib2
 
 
@@ -18,6 +21,9 @@ import urllib2
 HTTP_TIMEOUT = 5
 TZ_NAME = "America/Los_Angeles"
 MIME_HTML = "text/html"
+URL_SLUG_REGEX = "http://example.com/(.*)"
+FILE_SLUG_FORMAT = "/var/www/%s"
+
 OPENER = urllib2.build_opener()
 
 ## global variables
@@ -35,19 +41,18 @@ class Page:
     representation for an HTML5 page
     """
 
-    def __init__ (self, url, soup):
+    def __init__ (self, url, timestamp, soup):
         """
         initialize
         """
 
         self.url = url
+        self.pub_date = timestamp
+        self.freq = "weekly"
+        self.priority = 0.5
         self.soup = soup
         self.title = soup.title.string
         self.description = soup.findAll(attrs={"name":"description"})[0]["content"]
-        self.freq = "weekly"
-        self.priority = 0.5
-        self.pub_date = datetime.utcnow()
-        self.datetime = self.pub_date.isoformat()
 
 
     def to_feed (self):
@@ -75,7 +80,7 @@ class Page:
         xml.append(self.url)
         xml.append("</loc>")
         xml.append("<lastmod>")
-        xml.append(datetime.utcnow().strftime("%Y-%m-%d"))
+        xml.append(self.pub_date.strftime("%Y-%m-%d"))
         xml.append("</lastmod>")
         xml.append("<changefreq>")
         xml.append(self.freq)
@@ -91,14 +96,17 @@ class Page:
 ######################################################################
 ## top-level methods
 
-def init_crawler (bot_name="pySite crawler 0.118", http_timeout=5, tz_name="America/Los_Angeles"):
+def init_crawler (bot_name="pySite crawler 0.118", http_timeout=5, tz_name="America/Los_Angeles", url_slug_regex="http://example.com/(.*)", file_slug_format="/var/www/%s"):
     """
     initialize the crawler settings
     """
 
     HTTP_TIMEOUT = int(http_timeout)
-    OPENER.addheaders = [('User-agent', bot_name), ('Accept-encoding', 'gzip')]
     TZ_NAME = tz_name
+    URL_SLUG_REGEX = url_slug_regex
+    FILE_SLUG_FORMAT = file_slug_format
+
+    OPENER.addheaders = [('User-agent', bot_name), ('Accept-encoding', 'gzip')]
 
     done_urls = set([])
     todo_urls = set([])
@@ -165,9 +173,23 @@ def http_get (url):
                         # external link
                         exit_urls.add(href)
 
-                # preserve metadata for generating RSS
+                # preserve parsed content+metadata for generating RSS feed, etc.
 
-                page = Page(norm_url, soup)
+                timestamp = datetime.utcnow()
+                m = re.search(URL_SLUG_REGEX, norm_url)
+
+                if m:
+                    file_path = FILE_SLUG_FORMAT % m.group(1)
+
+                    if os.path.isfile(file_path):
+                        timestamp = datetime.fromtimestamp(os.path.getctime(file_path))
+                else:
+                    for d in soup.findAll("time"):
+                        dt = d[0]["datetime"]
+                        local_dt = dateutil.parser.parse(dt).replace(tzinfo=pytz.timezone(TZ_NAME))
+                        timestamp = local_dt.astimezone(pytz.utc)
+
+                page = Page(norm_url, timestamp, soup)
 
     except httplib.InvalidURL:
         status = "400"
