@@ -18,6 +18,8 @@ import urllib2
 ######################################################################
 ## static definitions
       
+debug = False # True
+
 HTTP_TIMEOUT = 5
 TZ_NAME = "America/Los_Angeles"
 MIME_HTML = "text/html"
@@ -101,6 +103,8 @@ def init_crawler (bot_name="pySite crawler 0.118", http_timeout=5, tz_name="Amer
     initialize the crawler settings
     """
 
+    global HTTP_TIMEOUT, TZ_NAME, URL_SLUG_REGEX, FILE_SLUG_FORMAT, OPENER, done_urls, todo_urls, exit_urls
+
     HTTP_TIMEOUT = int(http_timeout)
     TZ_NAME = tz_name
     URL_SLUG_REGEX = url_slug_regex
@@ -118,6 +122,8 @@ def add_url (url):
     add a URL to the TODO list, if it has not been visited already
     """
 
+    global done_urls, todo_urls
+
     if url not in done_urls:
         todo_urls.add(url)
 
@@ -126,6 +132,11 @@ def http_get (url):
     """
     attempt to fetch HTML+status for a given URL
     """
+
+    global done_urls, todo_urls, exit_urls
+
+    if debug:
+        print url
 
     response = None
     status = "400"
@@ -178,8 +189,15 @@ def http_get (url):
                 timestamp = datetime.utcnow()
                 m = re.search(URL_SLUG_REGEX, norm_url)
 
+                if debug:
+                    print URL_SLUG_REGEX
+                    print norm_url
+
                 if m:
                     file_path = FILE_SLUG_FORMAT % m.group(1)
+
+                    if debug:
+                        print file_path
 
                     if os.path.isfile(file_path):
                         timestamp = datetime.fromtimestamp(os.path.getctime(file_path))
@@ -208,7 +226,7 @@ def http_get (url):
     return log_line, page
 
 
-def http_head (url, log=[]):
+def http_head (url):
     """
     test the HTTP status for an external URL
     """
@@ -246,6 +264,8 @@ def crawl_site (seed_urls=[]):
     crawl a web site, starting with the given 'seed' URL list
     """
 
+    global todo_urls
+
     for url in seed_urls:
         add_url(url);
 
@@ -257,6 +277,8 @@ def test_externals ():
     """
     test the status of the external URLs
     """
+
+    global exit_urls
 
     for url in sorted(exit_urls):
         yield http_head(url)

@@ -1,0 +1,22 @@
+{
+  "seed_urls": [
+    "http://example.com/"
+  ],
+
+  "bot_name": "Mozilla/5.0 (Windows NT 5.1; rv:6.0.2) Gecko/20100101 Firefox/6.0.2",
+  "http_timeout": 5,
+  "tz_name": "America/Los_Angeles",
+  "url_slug_regex": "http://example.com/(.*)",
+  "file_slug_format": "/var/www/%s",
+
+  "rss_feed": {
+    "title": "My Web Site",
+    "link": "http://example.com/",
+    "description": "The latest news from My Web Site",
+    "image": "http://example.com/favicon.png",
+    "rss_link": "http://example.com/rss.xml",
+    "language": "en",
+    "copyright": "My Web Site articles are licensed under a Creative Commons Attribution-ShareAlike 3.0 Unported License",
+    "ttl": "1440"
+  }
+}
